@@ -70,6 +70,30 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(item)
 }
 
+func getItems(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT id, title FROM items`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]Item, 0)
+	for rows.Next() {
+		var item Item
+		if err := rows.Scan(
+			&item.ID,
+			&item.Title,
+		); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		items = append(items, item)
+	}
+
+	json.NewEncoder(w).Encode(items)
+}
+
 func updateItem(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 
@@ -104,10 +128,7 @@ func deleteItem(w http.ResponseWriter, r *http.Request) {
 func main() {
 	initDB()
 
-	http.HandleFunc("/create", createItem)
-	http.HandleFunc("/read", getItem)
-	http.HandleFunc("/update", updateItem)
-	http.HandleFunc("/delete", deleteItem)
+	http.HandleFunc("/items", itemsHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -116,4 +137,25 @@ func main() {
 
 	fmt.Println("Server is running on port", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+func itemsHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+
+	switch r.Method {
+	case http.MethodPost:
+		createItem(w, r)
+	case http.MethodGet:
+		if id == "" {
+			getItems(w, r)
+		} else {
+			getItem(w, r)
+		}
+	case http.MethodPut:
+		updateItem(w, r)
+	case http.MethodDelete:
+		deleteItem(w, r)
+	default:
+		http.Error(w, "Method not Allowed", http.StatusMethodNotAllowed)
+	}
 }
