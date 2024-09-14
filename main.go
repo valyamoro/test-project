@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 
 	_ "github.com/lib/pq"
 )
@@ -17,7 +19,11 @@ type Item struct {
 	Title string `json:"title"`
 }
 
-var db *sql.DB
+var (
+	db         *sql.DB
+	cache      = make(map[int]Item)
+	cacheMutex = sync.RWMutex{}
+)
 
 func initDB() {
 	connStr := "user=postgres password=root dbname=test_project sslmode=disable"
@@ -48,12 +54,25 @@ func createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheMutex.Lock()
+	cache[item.ID] = item
+	cacheMutex.Unlock()
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(item)
 }
 
 func getItem(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
+	idInt, _ := strconv.ParseInt(id, 0, 32)
+	cacheMutex.RLock()
+	itemFromCache, found := cache[int(idInt)]
+	cacheMutex.RUnlock()
+
+	if found {
+		json.NewEncoder(w).Encode(itemFromCache)
+		return
+	}
 
 	var item Item
 	query := `SELECT id, title FROM items WHERE id=$1`
@@ -66,6 +85,10 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	cacheMutex.Lock()
+	cache[item.ID] = item
+	cacheMutex.Unlock()
 
 	json.NewEncoder(w).Encode(item)
 }
@@ -109,17 +132,25 @@ func updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheMutex.Lock()
+	cache[item.ID] = item
+	cacheMutex.Unlock()
+
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode("Item updated successfully")
 }
 
 func deleteItem(w http.ResponseWriter, r *http.Request) {
 	query := `DELETE FROM items WHERE id = $1`
-	id := r.URL.Query().Get("id")
+	id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 0, 32)
 	if _, err := db.Exec(query, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	cacheMutex.Lock()
+	delete(cache, int(id))
+	cacheMutex.Unlock()
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode("Item deleted successfully")
